@@ -1,0 +1,25 @@
+{
+  "authors": [
+    "Sawyer X"
+  ],
+  "build-depends": [
+  ],
+  "depends": [
+    "JSON::Fast"
+  ],
+  "description": "Raku client to the Melian cache",
+  "license": "MIT",
+  "name": "Melian",
+  "perl": "6.d",
+  "provides": {
+    "Melian": "lib/Melian.rakumod"
+  },
+  "resources": [
+  ],
+  "source-url": "",
+  "tags": [
+  ],
+  "test-depends": [
+  ],
+  "version": "0.0.1"
+}

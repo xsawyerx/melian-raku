@@ -1,0 +1,239 @@
+use Test;
+use JSON::Fast;
+use Melian;
+
+constant %SCHEMA = {
+    tables => [
+        {
+            name => 'table1',
+            id => 0,
+            period => 60,
+            indexes => [
+                { column => 'id', id => 0, type => 'int' },
+            ],
+        },
+        {
+            name => 'table2',
+            id => 1,
+            period => 60,
+            indexes => [
+                { column => 'id', id => 0, type => 'int' },
+                { column => 'hostname', id => 1, type => 'string' },
+            ],
+        },
+    ],
+};
+
+constant %TABLE1-ROW = {
+    active      => 1,
+    category    => 'alpha',
+    created_at  => '2025-10-30 14:26:47',
+    description => 'Mock description for item 5',
+    id          => 5,
+    name        => 'item_5',
+    updated_at  => '2025-11-04 14:26:47',
+    value       => 'VAL_0005',
+};
+
+constant %TABLE2-ROW = {
+    hostname => 'host-00002',
+    id       => 2,
+    ip       => '10.0.2.0',
+    status   => 'maintenance',
+};
+
+class MockMelianServer {
+    has $.dsn;
+    has Supply  $!listener;
+    has Tap     $!listener-tap;
+    has Promise $!task;
+
+    method start(:$host = '127.0.0.1', :$port = 33033) {
+        $!listener = IO::Socket::Async.listen($host, $port);
+        $!dsn = "tcp://{$host}:{$port}";
+        $!listener-tap = $!listener.tap(
+            -> $conn { start self!handle-connection($conn) }
+        );
+        $!task = Promise.kept(True);
+        self;
+    }
+
+    method stop() {
+        if $!listener-tap.defined {
+            $!listener-tap.close;
+            $!listener-tap = Nil;
+        }
+        await $!task if $!task;
+    }
+
+    method !handle-connection(IO::Socket::Async $conn) {
+        my buf8 $read-buffer = buf8.new;
+        my $tap;
+        $tap = $conn.Supply(:bin).tap(
+            -> $chunk {
+                $read-buffer ~= $chunk;
+                self!drain-connection($conn, $read-buffer);
+            },
+            done => {
+                self!drain-connection($conn, $read-buffer);
+                $tap.close if $tap;
+                $conn.close;
+            },
+            quit => -> $err {
+                $tap.close if $tap;
+                $conn.close;
+            }
+        );
+    }
+
+    method !drain-connection(IO::Socket::Async $conn, buf8 $buffer is rw) {
+        loop {
+            last if $buffer.elems < 8;
+            my buf8 $header = $buffer.subbuf(0, 8);
+            my UInt $payload-len = decode-be32($header.subbuf(4, 4));
+            my $total = 8 + $payload-len;
+            last if $buffer.elems < $total;
+            my buf8 $payload = $payload-len ?? $buffer.subbuf(8, $payload-len) !! buf8.new;
+            $buffer = $buffer.subbuf($total);
+            my buf8 $response = self!route-request($header, $payload);
+            self!send-response($conn, $response);
+        }
+    }
+
+    method !route-request(buf8 $header, buf8 $payload --> buf8) {
+        my UInt $action = $header[1];
+        my UInt $table-id = $header[2];
+        my UInt $index-id = $header[3];
+        given $action {
+            when 0x44 { # DESCRIBE
+                return to-json(%SCHEMA).encode('utf8');
+            }
+            when 0x46 { # FETCH
+                return self!mock-fetch($table-id, $index-id, $payload);
+            }
+            default {
+                return buf8.new;
+            }
+        }
+    }
+
+    method !mock-fetch(UInt $table-id, UInt $index-id, buf8 $payload --> buf8) {
+        if $table-id == 0 && $index-id == 0 && decode-le32($payload) == 5 {
+            return to-json(%TABLE1-ROW).encode('utf8');
+        }
+        if $table-id == 1 && $index-id == 0 && decode-le32($payload) == 2 {
+            return to-json(%TABLE2-ROW).encode('utf8');
+        }
+        if $table-id == 1 && $index-id == 1 && $payload.decode('utf8') eq 'host-00002' {
+            return to-json(%TABLE2-ROW).encode('utf8');
+        }
+        buf8.new;
+    }
+
+    method !send-response(IO::Socket::Async $conn, buf8 $payload) {
+        my Int $len = $payload.elems;
+        my buf8 $header = buf8.new(
+            ($len +> 24) +& 0xFF,
+            ($len +> 16) +& 0xFF,
+            ($len +> 8)  +& 0xFF,
+            $len +& 0xFF,
+        );
+        $conn.write($header ~ $payload);
+    }
+}
+
+sub decode-be32(buf8 $bytes --> UInt) {
+    ($bytes[0] +< 24)
+        + ($bytes[1] +< 16)
+        + ($bytes[2] +< 8)
+        + $bytes[3];
+}
+
+sub decode-le32(buf8 $bytes --> UInt) {
+    ($bytes[0])
+        + ($bytes[1] +< 8)
+        + ($bytes[2] +< 16)
+        + ($bytes[3] +< 24);
+}
+
+sub encode-utf8-buf(Str $value --> buf8) {
+    buf8.new(|$value.encode('utf8').list);
+}
+
+subtest 'parse schema spec' => {
+    my $melian = Melian.new(
+        schema-spec => 'table1#0|60|id#0:int,table2#1|60|id#0:int;hostname#1:string'
+    );
+
+    isa-ok $melian.schema, 'Promise';
+    is-deeply await($melian.schema), %SCHEMA, 'Got correct schema';
+}
+
+subtest 'load schema from file' => {
+    my $path = $*TMPDIR.add("melian-schema-{now.Int}-{(1000.rand.Int)}.json");
+    $path.spurt(to-json(%SCHEMA));
+    LEAVE $path.unlink if $path.e;
+
+    my $melian = Melian.new(schema-file => $path.Str);
+    isa-ok $melian.schema, 'Promise';
+    is-deeply await($melian.schema), %SCHEMA, 'Schema loaded from file matches spec';
+}
+
+subtest 'mock server interactions' => {
+    my $server = MockMelianServer.new.start;
+    LEAVE $server.stop;
+
+    my $client = Melian.new(dsn => $server.dsn);
+
+    my %schema = await $client.schema;
+    is %schema<tables>.elems, 2, 'schema has two tables';
+
+    my %table1 = await $client.fetch-by-int-from('table1', 'id', 5);
+    is-deeply %table1, %TABLE1-ROW, 'table1 fetch returns expected row';
+
+    my %table2-host = await $client.fetch-by-string-from('table2', 'hostname', 'host-00002');
+    is-deeply %table2-host, %TABLE2-ROW, 'table2 hostname fetch returns expected row';
+
+    my ($table2-id, $host-index) = await $client.resolve-index('table2', 'hostname');
+    is $table2-id, 1, 'resolved table2 id';
+    is $host-index, 1, 'resolved hostname index id';
+
+    my $missing = await $client.fetch-by-string(1, 1, 'unknown');
+    ok !$missing.defined, 'missing rows return Nil';
+
+    dies-ok { await $client.resolve-index('table1', 'missing') }, 'resolve-index throws on unknown column';
+}
+
+if %*ENV<TEST_MELIAN_LIVE> {
+    subtest 'live integration' => {
+        my $client = Melian.new(dsn => 'unix:///tmp/melian.sock');
+        my %schema = await $client.schema;
+        ok %schema<tables>.elems > 0, 'live schema loaded';
+
+        my buf8 $hostname-key = encode-utf8-buf('host-00002');
+        my buf8 $raw-from-response = await $client.fetch-raw-from('table2', 'hostname', $hostname-key);
+        my %raw-from-row = from-json($raw-from-response.decode('utf8'));
+        is %raw-from-row<hostname>, 'host-00002', 'fetch-raw-from returns expected row';
+
+        my %row-by-int = await $client.fetch-by-int( 0, 0, 5 );
+        is %row-by-int<id>, 5, 'fetch-by-int( 0, 0, 5 ) succeeded';
+
+        my %row-by-string = await $client.fetch-by-string( 1, 1, 'host-00002' );
+        is %row-by-string<id>, 2, "fetch-by-string( 1, 1, 'host-00002' ) succeeded";
+
+        my %row-by-int-from = await $client.fetch-by-int-from('table1', 'id', 5);
+        is %row-by-int-from<id>, 5, 'live table1 fetch succeeded';
+
+        my %host-by-string-from = await $client.fetch-by-string-from('table2', 'hostname', 'host-00002');
+        is %host-by-string-from<hostname>, 'host-00002', 'live hostname fetch succeeded';
+
+        my buf8 $raw-key = buf8.new(5, 0, 0, 0);
+        my buf8 $raw-response = await $client.fetch-raw(0, 0, $raw-key);
+        my %raw-row = from-json($raw-response.decode('utf8'));
+        is %raw-row<id>, 5, 'fetch-raw returns expected row';
+    }
+} else {
+    skip "Set TEST_MELIAN_LIVE=1 to run live testing";
+}
+
+done-testing;
