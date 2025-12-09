@@ -106,7 +106,7 @@ class MockMelianServer {
         my UInt $index-id = $header[3];
         given $action {
             when 0x44 { # DESCRIBE
-                return to-json(%SCHEMA).encode('utf8');
+                return encode-utf8-buf(to-json(%SCHEMA));
             }
             when 0x46 { # FETCH
                 return self!mock-fetch($table-id, $index-id, $payload);
@@ -119,13 +119,13 @@ class MockMelianServer {
 
     method !mock-fetch(UInt $table-id, UInt $index-id, buf8 $payload --> buf8) {
         if $table-id == 0 && $index-id == 0 && decode-le32($payload) == 5 {
-            return to-json(%TABLE1-ROW).encode('utf8');
+            return encode-utf8-buf(to-json(%TABLE1-ROW));
         }
         if $table-id == 1 && $index-id == 0 && decode-le32($payload) == 2 {
-            return to-json(%TABLE2-ROW).encode('utf8');
+            return encode-utf8-buf(to-json(%TABLE2-ROW));
         }
         if $table-id == 1 && $index-id == 1 && $payload.decode('utf8') eq 'host-00002' {
-            return to-json(%TABLE2-ROW).encode('utf8');
+            return encode-utf8-buf(to-json(%TABLE2-ROW));
         }
         buf8.new;
     }
