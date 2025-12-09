@@ -1,7 +1,7 @@
 NAME
 ====
 
-Melian -  Raku client to the Melian cache
+Melian - Async Raku client for the Melian cache server
 
 SYNOPSIS
 ========

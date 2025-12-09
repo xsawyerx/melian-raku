@@ -7,7 +7,7 @@
   "depends": [
     "JSON::Fast"
   ],
-  "description": "Raku client to the Melian cache",
+  "description": "Async Raku client for the Melian cache server",
   "license": "MIT",
   "name": "Melian",
   "perl": "6.d",
