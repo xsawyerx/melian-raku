@@ -340,7 +340,7 @@ my %row = await $client.fetch-by-string( 1, 1, 'Pixel' );
 
 =head1 DESCRIPTION
 
-Melian is a tiny, fast, no-nonsense Perl client for the Melian cache server.
+Melian is a tiny, fast, no-nonsense Rakudo client for the Melian cache server.
 
 L<Melian|https://github.com/xsawyerx/melian/> (the server) keeps full table
 snapshots in memory. Lookups are done entirely inside the server and returned
@@ -417,18 +417,6 @@ Each table entry contains:
 
 =end code
 
-If you use the functional API, you probably want to store them in constants:
-
-=begin code :lang<raku>
-
-constant $CAT_ID_TABLE    = 1;
-constant $CAT_ID_COLUMN   = 0; # integer column
-constant $CAT_NAME_COLUMN = 1; # string column
-
-=end code
-
-This saves name lookups on every request.
-
 =head1 METHODS
 
 =head2 C<new(:schema, :schema-spec, :schema-file, :dsn)>
@@ -442,24 +430,24 @@ This saves name lookups on every request.
 
 =end code
 
-Creates a new client and automatically loads the schema.
+Creates a new client.
 
 You may specify:
 
 =over 4
 
-=item * C<schema> — already-parsed schema
+=item * C<schema> - already-parsed schema
 
 =begin code :lang<raku>
 
     my $melian = Melian.new(
-        'schema' => %(
-            'id'      => 1,
-            'name'    => 'cats',
-            'period'  => 45,
-            'indexes' => [
-                { 'id' => 0, 'column' => "id",   'type' => 'int'    },
-                { 'id' => 1, 'column' => "name", 'type' => 'string' },
+        schema => %(
+            id      => 1,
+            name    => 'cats',
+            period  => 45,
+            indexes => [
+                { id => 0, column => 'id',   type => 'int'    },
+                { id => 1, column => 'name', type => 'string' },
             ],
         ),
         ...
@@ -467,10 +455,7 @@ You may specify:
 
 =end code
 
-You would normally either provide a spec, a file, or nothing (to let
-Melian fetch it from the server).
-
-=item * C<schema-spec> — inline schema description
+=item * C<schema-spec> - inline schema description
 
 =begin code :lang<raku>
 
@@ -481,7 +466,7 @@ Melian fetch it from the server).
 
 =end code
 
-=item * C<schema-file> — path to JSON schema file
+=item * C<schema-file> - path to JSON schema file
 
 =begin code :lang<raku>
 
@@ -501,6 +486,12 @@ Melian fetch it from the server).
 =end code
 
 =back
+
+=head2 C<schema>
+
+    my %schema = await $melian.schema;
+
+Returns a Promise to the parsed schema.
 
 =head2 C<fetch-raw(Int $table_id, Int $column_id, Buf:D $key)>
 
@@ -523,9 +514,9 @@ C<fetch-by-string-from()> instead.
 
 =begin code :lang<raku>
 
-    my buf8 $key          = encode-utf8-buf('Pixel');
-    my buf8 $raw-response = await $client.fetch-raw-from( 'cats', 'name', $key );
-    my %raw-row           = from-json( $raw-from-response.decode('utf8') );
+    my buf8 $raw-key      = encode-utf8-buf('Pixel');
+    my buf8 $raw-response = await $client.fetch-raw-from( 'cats', 'name', $raw-key );
+    my %raw-row           = from-json( $raw-response.decode('utf8') );
 
 =end code
 
@@ -588,6 +579,5 @@ ID-based mode is faster because it skips name lookups.
 If you care about performance, use table and column IDs.
 
 =back
-
 
 =end pod
