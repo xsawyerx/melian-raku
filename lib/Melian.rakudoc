@@ -1,0 +1,267 @@
+=begin pod
+
+=head1 NAME
+
+Melian - Async Raku client for the Melian cache server
+
+=head1 SYNOPSIS
+
+=begin code :lang<raku>
+
+use Melian;
+my $melian = Melian.new(dsn => 'unix:///tmp/melian.sock');
+
+# Fast
+my %row = await $client.fetch-by-int-from( 'cats', 'id', 5);
+my %row = await $client.fetch-by-string-from( 'cats', 'name', 'Pixel' );
+
+# Faster, using IDs for the tables and columns
+# (to discover the IDs, see schema() method)
+my %row = await $client.fetch-by-int( 0, 0, 5 );
+my %row = await $client.fetch-by-string( 1, 1, 'Pixel' );
+
+=end code
+
+=head1 DESCRIPTION
+
+Melian is a tiny, fast, no-nonsense Rakudo client for the Melian cache server.
+
+L<Melian|https://github.com/xsawyerx/melian/> (the server) keeps full table
+snapshots in memory. Lookups are done entirely inside the server and returned
+as small JSON blobs. Think of it as a super-fast read-only lookup service.
+
+This module is a client to the Melian server, allowing fully asynchronous
+access to it in Raku.
+
+=head1 SCHEMA
+
+Melian needs a schema so it knows which table IDs and column IDs correspond
+to which names. A schema looks something like:
+
+=begin code
+
+people#0|60|id#0:int
+
+=end code
+
+Or:
+
+=begin code
+
+    people#0|60|id#0:int,cats#1|45|id#0:int;name#1:string
+
+=end code
+
+The format is simple:
+
+=over 4
+
+=item *
+
+C<table_name#table_id> (multiple tables separated by C<,>)
+
+=item *
+
+C<|refresh_period_in_seconds>
+
+=item *
+
+C<|column_name#column_id:column_type> (multiple columns separated by C<;>)
+
+=back
+
+You do NOT need to write this schema unless you want to. If you do not supply
+one, Melian will request it automatically from the server at startup.
+
+If you provide a schema, it should match the schema set for the Melian server.
+
+=head2 Accessing table and column IDs
+
+Once the client is constructed:
+
+=begin code :lang<raku>
+
+my %schema = await $melian.schema;
+
+=end code
+
+Each table entry contains:
+
+=begin code
+
+{
+    id      => 1,
+    name    => "cats",
+    period  => 45,
+    indexes => [
+        { id => 0, column => "id",   type => "int"    },
+        { id => 1, column => "name", type => "string" },
+    ],
+}
+
+=end code
+
+=head1 METHODS
+
+=head2 C<new(:schema, :schema-spec, :schema-file, :dsn)>
+
+=begin code :lang<raku>
+
+    my $melian = Melian.new(
+        'dsn'         => 'unix:///tmp/melian.sock',
+        'schema-spec' => 'people#0|60|id#0:int',
+    );
+
+=end code
+
+Creates a new client.
+
+You may specify:
+
+=over 4
+
+=item * C<schema> - already-parsed schema
+
+=begin code :lang<raku>
+
+    my $melian = Melian.new(
+        schema => %(
+            id      => 1,
+            name    => 'cats',
+            period  => 45,
+            indexes => [
+                { id => 0, column => 'id',   type => 'int'    },
+                { id => 1, column => 'name', type => 'string' },
+            ],
+        ),
+        ...
+    );
+
+=end code
+
+=item * C<schema-spec> - inline schema description
+
+=begin code :lang<raku>
+
+    my $melian = Melian.new(
+        'schema-spec' => 'cats#0|45|id#0:int;name#1:string',
+        ...
+    );
+
+=end code
+
+=item * C<schema-file> - path to JSON schema file
+
+=begin code :lang<raku>
+
+    my $melian = Melian.new(
+        'schema-file' => '/etc/melian/schema.json',
+        ...
+    );
+
+=end code
+
+=item * nothing — Melian will ask the server for the schema
+
+=begin code :lang<raku>
+
+    my $melian = Melian.new(...);
+
+=end code
+
+=back
+
+=head2 C<schema>
+
+    my %schema = await $melian.schema;
+
+Returns a Promise to the parsed schema.
+
+=head2 C<fetch-raw(Int $table_id, Int $column_id, Buf:D $key)>
+
+=begin code :lang<raku>
+
+    my buf8 $raw-key      = buf8.new(5, 0, 0, 0);
+    my buf8 $raw-response = await $client.fetch-raw(0, 0, $raw-key);
+    my %raw-row           = from-json($raw-response.decode('utf8'));
+
+=end code
+
+Fetches a raw JSON string. Does NOT decode it. Assumes input is encoded
+correctly.
+
+You probably don't want to use this. See C<fetch-by-int()>,
+C<fetch-by-int-from()>, C<fetch-by-string()>, and
+C<fetch-by-string-from()> instead.
+
+=head2 C<fetch-raw-from(Str $table_name, Str $column_name, Buf:D $key)>
+
+=begin code :lang<raku>
+
+    my buf8 $raw-key      = encode-utf8-buf('Pixel');
+    my buf8 $raw-response = await $client.fetch-raw-from( 'cats', 'name', $raw-key );
+    my %raw-row           = from-json( $raw-response.decode('utf8') );
+
+=end code
+
+Same as above, but uses names instead of table and column IDs.
+
+You probably don't want to use this. See C<fetch-by-int()>,
+C<fetch-by-int-from()>, C<fetch-by-string()>, and
+C<fetch-by-string-from()> instead.
+
+=head2 C<fetch-by-string(Int $table_id, Int $column_id, Str:D $string_key)>
+
+=begin code :lang<raku>
+
+    my %cat = await $client.fetch-by-string( 1, 1, 'Pixel' );
+
+=end code
+
+Fetches JSON from the server and decodes into a Hash.
+
+=head2 C<fetch-by-string-from(Str $table_name, Str $column_name, Str:D $string_key)>
+
+=begin code :lang<raku>
+
+    my %cat = await $client.fetch-by-string-from( 'cat', 'name', 'Pixel');
+
+=end code
+
+Name-based version. Slightly slower than using IDs.
+
+=head2 C<fetch-by-int(Int $table_id, Int $column_id, Int $int_key)>
+
+=begin code :lang<raku>
+
+    my %row = await $client.fetch-by-int( 0, 0, 5 );
+
+=end code
+
+Same as C<fetch-by-string>, but for integer-based column searches.
+
+=head2 C<fetch-by-int-from(Str $table_name, Str $column_name, Int $int_key)>
+
+=begin code :lang<raku>
+
+    my %row = await $client.fetch-by-int-from( 'cats', 'id', 5);
+
+=end code
+
+Name-based version. Slightly slower than using IDs.
+
+=head1 PERFORMANCE NOTES
+
+=over 4
+
+=item *
+
+ID-based mode is faster because it skips name lookups.
+
+=item *
+
+If you care about performance, use table and column IDs.
+
+=back
+
+=end pod
