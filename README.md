@@ -23,7 +23,7 @@ my %row = await $client.fetch-by-string( 1, 1, 'Pixel' );
 DESCRIPTION
 ===========
 
-Melian is a tiny, fast, no-nonsense Perl client for the Melian cache server.
+Melian is a tiny, fast, no-nonsense Raku client for the Melian cache server.
 
 [Melian](https://github.com/xsawyerx/melian/) (the server) keeps full table snapshots in memory. Lookups are done entirely inside the server and returned as small JSON blobs. Think of it as a super-fast read-only lookup service.
 
